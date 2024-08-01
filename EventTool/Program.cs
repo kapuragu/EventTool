@@ -96,7 +96,17 @@ namespace EventTool
 
             writer.BaseStream.Position = endOfPacketPositon;
             writer.Write((uint)endOfPacket - (0x10));
-            writer.Write((uint)eventPosition - (0x10));
+            if (writer.BaseStream.Position==0x28)
+            {
+                writer.Write((uint)eventPosition - (0x10));
+            }
+            else if (writer.BaseStream.Position==0x18)
+            {
+                writer.WriteZeroes(4);
+            }
+            writer.BaseStream.Position = endOfPacket;
+            writer.BaseStream.SetLength(endOfPacket);
+            writer.BaseStream.Close();
         }
         static void ReadEvpData(BinaryReader reader, string filePath, Dictionaries dictionaries)
         {
