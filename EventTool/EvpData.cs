@@ -34,7 +34,7 @@ namespace EventTool
             }
         }
 
-        internal void Write(BinaryWriter writer, byte timeSectionType)
+        internal void Write(BinaryWriter writer, byte timeSectionType, Tuple<int, int> packetBounds)
         {
             long eventsStartPositon = writer.BaseStream.Position;
             uint categoryNameHash = uint.TryParse(CategoryName, out categoryNameHash) ? categoryNameHash : StrCode.StrCode32(CategoryName);
@@ -42,21 +42,25 @@ namespace EventTool
             writer.Write((short)Events.Length);
             writer.Write((short)0);
             long[] eventOffsetArrayStarts = new long[Events.Length];
-            uint[] eventOffsetArray = new uint[Events.Length];
+            writer.WriteZeroes(Events.Length*sizeof(uint));
             for (int i = 0; i < Events.Length; i++)
             {
-                eventOffsetArrayStarts[i]=writer.BaseStream.Position;
-                writer.Write((uint)0);
+                eventOffsetArrayStarts[i]=eventsStartPositon+0x8+i*sizeof(uint);
             }
-            writer.WriteZeroes(0xC);
+
+            writer.AlignStream(0x10);
+
+            if (writer.BaseStream.Position % 0x10 != 0)
+                writer.WriteZeroes(0xC);
+
             for (int i = 0; i < Events.Length; i++)
             {
                 long eventStartPositon = writer.BaseStream.Position;
                 writer.BaseStream.Position = eventOffsetArrayStarts[i];
-                writer.Write(eventStartPositon - eventsStartPositon);
+                writer.Write((uint)(eventStartPositon - eventsStartPositon));
 
                 writer.BaseStream.Position = eventStartPositon;
-                Events[i].Write(writer,timeSectionType);
+                Events[i].Write(writer,timeSectionType, packetBounds);
             }
         }
     }

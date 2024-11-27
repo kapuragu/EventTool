@@ -12,10 +12,15 @@ namespace EventTool
 
         }
 
-        public void Write(BinaryWriter writer, byte timeSectionType)
+        public void Write(BinaryWriter writer, byte timeSectionType, Tuple<int,int> packetBounds)
         {
             StartFrame = StartFrame < 0 ? StartFrame : (int)(StartFrame & 0xBFFFFFFF);
             EndFrame = EndFrame < 0 ? EndFrame : (int)(EndFrame & 0xBFFFFFFF);
+            if (packetBounds.Item1>0 && StartFrame <= packetBounds.Item1)
+                StartFrame |= 0x40000000;
+            if (EndFrame > packetBounds.Item2)
+                EndFrame |= 0x40000000;
+
             if (timeSectionType==0)
             {
                 writer.Write((int)StartFrame);

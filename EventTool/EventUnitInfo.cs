@@ -78,7 +78,7 @@ namespace EventTool
             }
         }
 
-        internal void Write(BinaryWriter writer, byte timeSectionType)
+        internal void Write(BinaryWriter writer, byte timeSectionType, Tuple<int, int> packetBounds)
         {
             uint eventNameHash = uint.TryParse(EventName, out eventNameHash) ? eventNameHash : StrCode.StrCode32(EventName);
             writer.Write(eventNameHash);
@@ -89,7 +89,7 @@ namespace EventTool
             writer.Write((byte)StringParams.Length);
             foreach (TimeSection timeSection in TimeSections)
             {
-                timeSection.Write(writer,timeSectionType);
+                timeSection.Write(writer,timeSectionType, packetBounds);
             }
 
             writer.AlignStream(4);

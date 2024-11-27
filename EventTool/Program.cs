@@ -56,6 +56,7 @@ namespace EventTool
                         BinaryReader reader = new BinaryReader(new FileStream(serializedFilePath, FileMode.Open));
                         if (ReadDemoPacket(reader))
                         {
+                            Tuple<int, int> packetBounds = new Tuple<int, int>(0,-1);
                             long eventPosition = reader.BaseStream.Position;
                             long endOfPacketPosition = 0x14;
                             reader.BaseStream.Position = 0x10;
@@ -63,12 +64,16 @@ namespace EventTool
                             if (demoPacketType==0)
                             {
                                 endOfPacketPosition += 0x10;
+                                reader.BaseStream.Position = 0x18;
+                                int startFrame = reader.ReadInt32();
+                                int packetFrameLength = reader.ReadInt32();
+                                packetBounds = new Tuple<int,int>(startFrame, startFrame+packetFrameLength);
                             }
                             reader.Close();
 
                             BinaryWriter writer = new BinaryWriter(new FileStream(serializedFilePath, FileMode.Open));
                             File.Copy(serializedFilePath, serializedFilePath+".o",true);
-                            SerializePacket(deserializedFilePath, writer, eventPosition, endOfPacketPosition);
+                            SerializePacket(deserializedFilePath, writer, eventPosition, endOfPacketPosition, packetBounds);
                         }
                     }
                     else
@@ -88,9 +93,9 @@ namespace EventTool
                     }
                 }
             }
-            Console.Read();
+            //Console.Read();
         }
-        static void SerializePacket(string filePath, BinaryWriter writer, long eventPosition, long endOfPacketPositon)
+        static void SerializePacket(string filePath, BinaryWriter writer, long eventPosition, long endOfPacketPositon, Tuple<int, int> packetBounds)
         {
             EvpData evpData = JsonConvert.DeserializeObject<EvpData>(File.ReadAllText(filePath));
 
@@ -109,9 +114,10 @@ namespace EventTool
 
             if (!isWriteEmpty)
             {
+
                 writer.BaseStream.Position = eventPosition;
 
-                evpData.Write(writer, 0);
+                evpData.Write(writer, 0, packetBounds);
 
                 writer.AlignStream(0x10);
             }
