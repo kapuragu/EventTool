@@ -76,20 +76,49 @@ namespace EventTool
                         BinaryReader reader = new BinaryReader(new FileStream(filePath, FileMode.Open));
                         if (ReadDemoPacket(reader))
                         {
-                            ReadEvpData(reader, filePath, dictionaries);
+                            long eventPosition = reader.BaseStream.Position;
+                            if (eventPosition == 0)
+                            {
+                                EvpData evpData = new EvpData();
+                                File.WriteAllText(Path.GetFileNameWithoutExtension(filePath) + Path.GetExtension(filePath) + deserializeExtension, JsonConvert.SerializeObject(evpData, Newtonsoft.Json.Formatting.Indented));
+                            }
+                            else
+                                ReadEvpData(reader, filePath, dictionaries);
                         }
                     }
                 }
             }
+            Console.Read();
         }
         static void SerializePacket(string filePath, BinaryWriter writer, long eventPosition, long endOfPacketPositon)
         {
             EvpData evpData = JsonConvert.DeserializeObject<EvpData>(File.ReadAllText(filePath));
 
-            writer.BaseStream.Position = eventPosition;
-            evpData.Write(writer,0);
-            writer.AlignStream(0x10);
+            bool isWriteEmpty = false;
+
+            if (evpData.CategoryName==null||evpData.Events==null)
+            {
+                isWriteEmpty = true;
+                eventPosition = 0;
+            }
+
+            if (eventPosition==0)
+            {
+                eventPosition = writer.BaseStream.Length;
+            }
+
+            if (!isWriteEmpty)
+            {
+                writer.BaseStream.Position = eventPosition;
+
+                evpData.Write(writer, 0);
+
+                writer.AlignStream(0x10);
+            }
+
             long endOfPacket = writer.BaseStream.Position;
+            if (isWriteEmpty)
+                endOfPacket = writer.BaseStream.Length;
 
             writer.BaseStream.Position = 4;
             writer.Write((uint)endOfPacket);
@@ -98,7 +127,10 @@ namespace EventTool
             writer.Write((uint)endOfPacket - (0x10));
             if (writer.BaseStream.Position==0x28)
             {
-                writer.Write((uint)eventPosition - (0x10));
+                if (!isWriteEmpty)
+                    writer.Write((uint)eventPosition - (0x10));
+                else
+                    writer.WriteZeroes(4);
             }
             else if (writer.BaseStream.Position==0x18)
             {
@@ -137,15 +169,18 @@ namespace EventTool
             }
             uint offsetToPacketEnd = reader.ReadUInt32();
             uint offsetToEvents = reader.ReadUInt32();
-            if (demoPacketType!=2 && (!(offsetToEvents > 0) || !(offsetToEvents < packetSize)))
+            if (demoPacketType==2)
             {
-                Console.WriteLine($"packet does not have events!!!");
+                Console.WriteLine($"Node packets can't have events");
                 return false;
             }
-            if (demoPacketType != 2)
+            if (0==offsetToEvents||offsetToEvents>=packetSize)
             {
-                reader.BaseStream.Position = demoPacketHeaderStart + offsetToEvents;
+                Console.WriteLine($"packet event offset {offsetToEvents} is zero or out of bounds of {packetSize}!!!");
+                reader.BaseStream.Position = 0;
+                return true;
             }
+            reader.BaseStream.Position = demoPacketHeaderStart + offsetToEvents;
             return true;
         }
         public static Dictionary<ulong, string> CreateDictionary64(string dictionaryFilePath)
