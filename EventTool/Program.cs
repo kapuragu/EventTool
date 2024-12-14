@@ -56,11 +56,12 @@ namespace EventTool
                         BinaryReader reader = new BinaryReader(new FileStream(serializedFilePath, FileMode.Open));
                         if (ReadDemoPacket(reader))
                         {
-                            Tuple<int, int> packetBounds = new Tuple<int, int>(0,-1);
+                            Tuple<int, int> packetBounds = new Tuple<int, int>(-1,-1);
                             long eventPosition = reader.BaseStream.Position;
                             long endOfPacketPosition = 0x14;
                             reader.BaseStream.Position = 0x10;
                             uint demoPacketType = reader.ReadUInt32();
+                            uint flags = reader.ReadUInt32();
                             if (demoPacketType==0)
                             {
                                 endOfPacketPosition += 0x10;
@@ -73,7 +74,7 @@ namespace EventTool
 
                             BinaryWriter writer = new BinaryWriter(new FileStream(serializedFilePath, FileMode.Open));
                             File.Copy(serializedFilePath, serializedFilePath+".o",true);
-                            SerializePacket(deserializedFilePath, writer, eventPosition, endOfPacketPosition, packetBounds);
+                            SerializePacket(deserializedFilePath, writer, eventPosition, endOfPacketPosition, packetBounds, flags);
                         }
                     }
                     else
@@ -95,7 +96,7 @@ namespace EventTool
             }
             //Console.Read();
         }
-        static void SerializePacket(string filePath, BinaryWriter writer, long eventPosition, long endOfPacketPositon, Tuple<int, int> packetBounds)
+        static void SerializePacket(string filePath, BinaryWriter writer, long eventPosition, long endOfPacketPositon, Tuple<int, int> packetBounds, uint flags)
         {
             EvpData evpData = JsonConvert.DeserializeObject<EvpData>(File.ReadAllText(filePath));
 
@@ -114,7 +115,6 @@ namespace EventTool
 
             if (!isWriteEmpty)
             {
-
                 writer.BaseStream.Position = eventPosition;
 
                 evpData.Write(writer, 0, packetBounds);
@@ -128,6 +128,18 @@ namespace EventTool
 
             writer.BaseStream.Position = 4;
             writer.Write((uint)endOfPacket);
+
+            writer.BaseStream.Position = 0x14;
+            uint newFlags = flags;
+            if (!isWriteEmpty)
+            {
+                newFlags |= 0b1000;
+            }
+            else
+            {
+                newFlags ^= 0b1000;
+            }
+            //writer.Write(newFlags);
 
             writer.BaseStream.Position = endOfPacketPositon;
             writer.Write((uint)endOfPacket - (0x10));
@@ -175,12 +187,16 @@ namespace EventTool
             }
             uint offsetToPacketEnd = reader.ReadUInt32();
             uint offsetToEvents = reader.ReadUInt32();
-            if (demoPacketType==2)
+            if (demoPacketType==1)
             {
                 Console.WriteLine($"Node packets can't have events");
                 return false;
             }
-            if (0==offsetToEvents||offsetToEvents>=packetSize)
+            if (demoPacketType==2)
+            {
+                return true;
+            }
+            if (0==offsetToEvents||offsetToEvents>=packetSize&&demoPacketType==0)
             {
                 Console.WriteLine($"packet event offset {offsetToEvents} is zero or out of bounds of {packetSize}!!!");
                 reader.BaseStream.Position = 0;
