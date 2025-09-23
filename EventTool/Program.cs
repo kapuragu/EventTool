@@ -4,103 +4,120 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Runtime.Remoting.Messaging;
 
 namespace EventTool
 {
     public class Dictionaries
     {
-        public Dictionary<uint, string> categoryNameDictionary;
-        public Dictionary<uint, string> eventNameDictionary;
-        public Dictionary<ulong, string> stringDictionary;
-        public Dictionary<uint, string> intDictionary;
+        public Dictionary<uint, string> CategoryNameDictionary;
+        public Dictionary<uint, string> EventNameDictionary;
+        public Dictionary<ulong, string> StringDictionary;
+        public Dictionary<uint, string> IntDictionary;
     }
-    internal class Program
+    internal static class Program
     {
-        private const string categoryNameDictionaryName = "evf_categoryName.txt";
-        private const string eventNameDictionaryName = "evf_eventName.txt";
-        private const string stringDictionaryName = "evf_stringParam.txt";
-        private const string intDictionaryName = "evf_intParam.txt";
-        private const string deserializeExtension = ".evf.json";
-        static void Main(string[] args)
+        private const string CategoryNameDictionaryName = "evf_categoryName.txt";
+        private const string EventNameDictionaryName = "evf_eventName.txt";
+        private const string StringDictionaryName = "evf_stringParam.txt";
+        private const string IntDictionaryName = "evf_intParam.txt";
+        private const string DeserializeExtension = ".evf.json";
+        private const string StreamExtension = ".fsm";
+
+        private static void Main(string[] args)
         {
-            string directory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+            var directory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
 
-            Dictionaries dictionaries = new Dictionaries();
+            var dictionaries = new Dictionaries();
 
-            string categoryNameDictionaryDirectory = directory + "\\" + categoryNameDictionaryName;
-            string eventNameDictionaryDirectory = directory + "\\" + eventNameDictionaryName;
-            string stringDictionaryDirectory = directory + "\\" + stringDictionaryName;
-            string intDictionaryDirectory = directory + "\\" + intDictionaryName;
+            var categoryNameDictionaryDirectory = directory + "\\" + CategoryNameDictionaryName;
+            var eventNameDictionaryDirectory = directory + "\\" + EventNameDictionaryName;
+            var stringDictionaryDirectory = directory + "\\" + StringDictionaryName;
+            var intDictionaryDirectory = directory + "\\" + IntDictionaryName;
 
-            dictionaries.categoryNameDictionary = CreateDictionary32(categoryNameDictionaryDirectory);
-            dictionaries.eventNameDictionary = CreateDictionary32(eventNameDictionaryDirectory);
-            dictionaries.stringDictionary = CreateDictionary64(stringDictionaryDirectory);
-            dictionaries.intDictionary = CreateDictionary32(intDictionaryDirectory);
+            dictionaries.CategoryNameDictionary = CreateDictionary32(categoryNameDictionaryDirectory);
+            dictionaries.EventNameDictionary = CreateDictionary32(eventNameDictionaryDirectory);
+            dictionaries.StringDictionary = CreateDictionary64(stringDictionaryDirectory);
+            dictionaries.IntDictionary = CreateDictionary32(intDictionaryDirectory);
 
             foreach (var arg in args)
             {
-                if (File.Exists(arg))
+                if (!File.Exists(arg)) continue;
+
+                if (arg.Contains(DeserializeExtension))
                 {
-                    var filePath = arg;
-
-                    if (filePath.Contains(deserializeExtension))
+                    var serializedFilePath = arg.Replace(DeserializeExtension, string.Empty);
+                    if (!File.Exists(serializedFilePath))
                     {
-                        string deserializedFilePath = filePath;
-                        string serializedFilePath = deserializedFilePath.Replace(deserializeExtension, string.Empty);
-                        if (!File.Exists(serializedFilePath))
-                        {
-                            Console.WriteLine($"{serializedFilePath} doesn't exist, can't inject serialized events!");
-                            return;
-                        }
-                        BinaryReader reader = new BinaryReader(new FileStream(serializedFilePath, FileMode.Open));
-                        if (ReadDemoPacket(reader))
-                        {
-                            Tuple<int, int> packetBounds = new Tuple<int, int>(-1,-1);
-                            long eventPosition = reader.BaseStream.Position;
-                            long endOfPacketPosition = 0x14;
-                            reader.BaseStream.Position = 0x10;
-                            uint demoPacketType = reader.ReadUInt32();
-                            uint flags = reader.ReadUInt32();
-                            if (demoPacketType==0)
-                            {
-                                endOfPacketPosition += 0x10;
-                                reader.BaseStream.Position = 0x18;
-                                int startFrame = reader.ReadInt32();
-                                int packetFrameLength = reader.ReadInt32();
-                                packetBounds = new Tuple<int,int>(startFrame, startFrame+packetFrameLength);
-                            }
-                            reader.Close();
-
-                            BinaryWriter writer = new BinaryWriter(new FileStream(serializedFilePath, FileMode.Open));
-                            File.Copy(serializedFilePath, serializedFilePath+".o",true);
-                            SerializePacket(deserializedFilePath, writer, eventPosition, endOfPacketPosition, packetBounds, flags);
-                        }
+                        Console.WriteLine($"{serializedFilePath} doesn't exist, can't inject serialized events!");
+                        return;
                     }
-                    else
+                    var reader = new BinaryReader(new FileStream(serializedFilePath, FileMode.Open));
+                    if (!ReadDemoPacket(reader,true)) continue;
+                    var packetBounds = new Tuple<int, int>(-1,-1);
+                    var eventPosition = reader.BaseStream.Position;
+                    long endOfPacketPosition = 0x14;
+                    reader.BaseStream.Position = 0x10;
+                    var demoPacketType = reader.ReadUInt32();
+                    var flags = reader.ReadUInt32();
+                    if (demoPacketType==0)
                     {
-                        BinaryReader reader = new BinaryReader(new FileStream(filePath, FileMode.Open));
-                        if (ReadDemoPacket(reader))
+                        endOfPacketPosition += 0x10;
+                        reader.BaseStream.Position = 0x18;
+                        var startFrame = reader.ReadInt32();
+                        var packetFrameLength = reader.ReadInt32();
+                        packetBounds = new Tuple<int,int>(startFrame, startFrame+packetFrameLength);
+                    }
+                    reader.Close();
+
+                    var writer = new BinaryWriter(new FileStream(serializedFilePath, FileMode.Open));
+                    File.Copy(serializedFilePath, serializedFilePath+".o",true);
+                    SerializePacket(arg, writer, eventPosition, endOfPacketPosition, packetBounds, flags);
+                }
+                else
+                {
+                    var reader = new BinaryReader(new FileStream(arg, FileMode.Open));
+                    var evpData = new EvpData();
+                    var newEvents = new List<EventUnitInfo>();
+                    while (reader.BaseStream.Position < reader.BaseStream.Length)
+                    {
+                        if (!ReadDemoPacket(reader,false)) continue;
+                        var evpPacket = ReadEvpData(reader, dictionaries);
+                        if (evpData.CategoryName == null)
+                            evpData.CategoryName = evpPacket.CategoryName;
+                        
+                        foreach (var evpEvent in evpPacket.Events)
                         {
-                            long eventPosition = reader.BaseStream.Position;
-                            if (eventPosition == 0)
+                            var isInBounds = true;
+                            if (evpEvent.TimeSections.First() != null)
                             {
-                                EvpData evpData = new EvpData();
-                                File.WriteAllText(Path.GetFileNameWithoutExtension(filePath) + Path.GetExtension(filePath) + deserializeExtension, JsonConvert.SerializeObject(evpData, Newtonsoft.Json.Formatting.Indented));
+                                if (evpEvent.TimeSections.First().IsStartOutOfBounds)
+                                {
+                                    isInBounds = false;
+                                }
+                            }
+                            if (isInBounds)
+                            {
+                                newEvents.Add(evpEvent);
                             }
                             else
-                                ReadEvpData(reader, filePath, dictionaries);
+                            {
+                                Console.WriteLine($"Event #{Array.IndexOf(evpPacket.Events,evpEvent)} {evpEvent.EventName} is out of bounds!!!");
+                            }
                         }
+                        reader.AlignStream(0x10);
                     }
+                    evpData.Events=newEvents.ToArray();
+                    File.WriteAllText(Path.GetFileNameWithoutExtension(arg) + Path.GetExtension(arg) + DeserializeExtension, JsonConvert.SerializeObject(evpData, Newtonsoft.Json.Formatting.Indented));
                 }
             }
-            //Console.Read();
+            Console.Read();
         }
-        static void SerializePacket(string filePath, BinaryWriter writer, long eventPosition, long endOfPacketPositon, Tuple<int, int> packetBounds, uint flags)
-        {
-            EvpData evpData = JsonConvert.DeserializeObject<EvpData>(File.ReadAllText(filePath));
 
-            bool isWriteEmpty = false;
+        private static void SerializePacket(string filePath, BinaryWriter writer, long eventPosition, long endOfPacketPositon, Tuple<int, int> packetBounds, uint flags)
+        {
+            var evpData = JsonConvert.DeserializeObject<EvpData>(File.ReadAllText(filePath));
+
+            var isWriteEmpty = false;
 
             if (evpData.CategoryName==null||evpData.Events==null)
             {
@@ -122,7 +139,7 @@ namespace EventTool
                 writer.AlignStream(0x10);
             }
 
-            long endOfPacket = writer.BaseStream.Position;
+            var endOfPacket = writer.BaseStream.Position;
             if (isWriteEmpty)
                 endOfPacket = writer.BaseStream.Length;
 
@@ -130,7 +147,7 @@ namespace EventTool
             writer.Write((uint)endOfPacket);
 
             writer.BaseStream.Position = 0x14;
-            uint newFlags = flags;
+            var newFlags = flags;
             if (!isWriteEmpty)
             {
                 newFlags |= 0b1000;
@@ -143,97 +160,115 @@ namespace EventTool
 
             writer.BaseStream.Position = endOfPacketPositon;
             writer.Write((uint)endOfPacket - (0x10));
-            if (writer.BaseStream.Position==0x28)
+            switch (writer.BaseStream.Position)
             {
-                if (!isWriteEmpty)
+                case 0x28 when !isWriteEmpty:
                     writer.Write((uint)eventPosition - (0x10));
-                else
+                    break;
+                case 0x28:
+                case 0x18:
                     writer.WriteZeroes(4);
-            }
-            else if (writer.BaseStream.Position==0x18)
-            {
-                writer.WriteZeroes(4);
+                    break;
             }
             writer.BaseStream.Position = endOfPacket;
             writer.BaseStream.SetLength(endOfPacket);
             writer.BaseStream.Close();
         }
-        static void ReadEvpData(BinaryReader reader, string filePath, Dictionaries dictionaries)
+
+        private static EvpData ReadEvpData(BinaryReader reader, Dictionaries dictionaries)
         {
-            EvpData evpData = new EvpData();
+            var evpData = new EvpData();
             evpData.Read(reader, dictionaries);
-            File.WriteAllText(Path.GetFileNameWithoutExtension(filePath) + Path.GetExtension(filePath) + deserializeExtension, JsonConvert.SerializeObject(evpData, Newtonsoft.Json.Formatting.Indented));
+            return evpData;
         }
-        static bool ReadDemoPacket(BinaryReader reader)
+
+        private static bool ReadDemoPacket(BinaryReader reader, bool isWriteCheck)
         {
-            uint signature = reader.ReadUInt32();
+            var startOfPacket = reader.BaseStream.Position;
+            Console.WriteLine($"packet start: @{startOfPacket}");
+            var signature = reader.ReadUInt32();
+            var packetSize = reader.ReadUInt32();
+            Console.WriteLine($"packet size: {packetSize} bytes");
             if (signature != 1330464068)
             {
                 Console.WriteLine($"{signature} isn't DEMO packet signature!!!");
+                if (reader.BaseStream.Length - 8 < packetSize)
+                {
+                    Console.WriteLine($"Packet size exceeds file Length!!!");
+                }
+                else
+                {
+                    Console.WriteLine($"Skipping {signature} packet...");
+                    reader.BaseStream.Position += packetSize - 8;
+                }
                 return false;
             }
-            uint packetSize = reader.ReadUInt32();
-            Console.WriteLine($"packet size: {packetSize} bytes");
-            double packetStartTime = reader.ReadDouble();
+            var packetStartTime = reader.ReadDouble();
             Console.WriteLine($"packet start time: {packetStartTime} seconds");
-            long demoPacketHeaderStart = reader.BaseStream.Position;
-            uint demoPacketType = reader.ReadUInt32();
+            var demoPacketHeaderStart = reader.BaseStream.Position;
+            var demoPacketType = reader.ReadUInt32();
             if (demoPacketType == 0)
             {
-                uint demoPacketFlags = reader.ReadUInt32();
-                int frameStart = reader.ReadInt32();
-                int frameEnd = reader.ReadInt32();
-                int segmentCount = reader.ReadInt32();
+                var demoPacketFlags = reader.ReadUInt32();
+                var frameStart = reader.ReadInt32();
+                var frameEnd = reader.ReadInt32();
+                var segmentCount = reader.ReadInt32();
             }
-            uint offsetToPacketEnd = reader.ReadUInt32();
-            uint offsetToEvents = reader.ReadUInt32();
-            if (demoPacketType==1)
+            var offsetToPacketEnd = reader.ReadUInt32();
+            var offsetToEvents = reader.ReadUInt32();
+            switch (demoPacketType)
             {
-                Console.WriteLine($"Node packets can't have events");
-                return false;
+                case 1:
+                    Console.WriteLine($"Node packets can't have events");
+                    return false;
+                case 2:
+                    return true;
             }
-            if (demoPacketType==2)
-            {
-                return true;
-            }
-            if (0==offsetToEvents||offsetToEvents>=packetSize&&demoPacketType==0)
+
+            if (0==offsetToEvents||offsetToEvents >= packetSize && demoPacketType==0)
             {
                 Console.WriteLine($"packet event offset {offsetToEvents} is zero or out of bounds of {packetSize}!!!");
-                reader.BaseStream.Position = 0;
-                return true;
+                if (isWriteCheck)
+                {
+                    reader.BaseStream.Position = startOfPacket;
+                    return true;
+                }
+                else
+                {
+                    reader.BaseStream.Position = startOfPacket + packetSize;
+                    return false;
+                }
             }
             reader.BaseStream.Position = demoPacketHeaderStart + offsetToEvents;
             return true;
         }
-        public static Dictionary<ulong, string> CreateDictionary64(string dictionaryFilePath)
+
+        private static Dictionary<ulong, string> CreateDictionary64(string dictionaryFilePath)
         {
-            Dictionary<ulong, string> stringDictionary = new Dictionary<ulong, string>();
-            stringDictionary.Add(StrCode.StrCode64(string.Empty), string.Empty);
+            var stringDictionary = new Dictionary<ulong, string> { { StrCode.StrCode64(string.Empty), string.Empty } };
 
             if (File.Exists(dictionaryFilePath))
             {
-                string[] strings = File.ReadAllLines(dictionaryFilePath).Distinct().ToArray();
-                foreach (string value in strings)
+                var strings = File.ReadAllLines(dictionaryFilePath).Distinct().ToArray();
+                foreach (var value in strings)
                 {
                     stringDictionary[StrCode.StrCode64(value)] = value;
                 }
-            };
+            }
 
             return stringDictionary;
         }
-        public static Dictionary<uint, string> CreateDictionary32(string dictionaryFilePath)
-        {
-            Dictionary<uint, string> stringDictionary = new Dictionary<uint, string>();
-            stringDictionary.Add(StrCode.StrCode32(string.Empty), string.Empty);
 
-            if (File.Exists(dictionaryFilePath))
+        private static Dictionary<uint, string> CreateDictionary32(string dictionaryFilePath)
+        {
+            var stringDictionary = new Dictionary<uint, string> { { StrCode.StrCode32(string.Empty), string.Empty } };
+
+            if (!File.Exists(dictionaryFilePath)) return stringDictionary;
+            var strings = File.ReadAllLines(dictionaryFilePath).Distinct().ToArray();
+            foreach (var value in strings)
             {
-                string[] strings = File.ReadAllLines(dictionaryFilePath).Distinct().ToArray();
-                foreach (string value in strings)
-                {
-                    stringDictionary[StrCode.StrCode32(value)]=value;
-                }
-            };
+                stringDictionary[StrCode.StrCode32(value)]=value;
+            }
 
             return stringDictionary;
         }

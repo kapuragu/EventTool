@@ -1,12 +1,17 @@
 ﻿using System;
 using System.IO;
+using Newtonsoft.Json;
 
 namespace EventTool
 {
     public class TimeSection
     {
         public int StartFrame;
+        [JsonIgnore]
+        public bool IsStartOutOfBounds;
         public int EndFrame;
+        [JsonIgnore]
+        public bool IsEndOutOfBounds;
         public virtual void Read(BinaryReader reader)
         {
 
@@ -71,8 +76,10 @@ namespace EventTool
         public override void Read(BinaryReader reader)
         {
             StartFrame = reader.ReadInt32();
+            IsStartOutOfBounds = (StartFrame & 0x40000000)!=0;
             StartFrame = StartFrame < 0 ? StartFrame : (int)(StartFrame & 0xBFFFFFFF);
             EndFrame = reader.ReadInt32();
+            IsEndOutOfBounds = (EndFrame>0)&(EndFrame & 0x40000000)!=0;
             EndFrame = EndFrame < 0 ? EndFrame : (int)(EndFrame & 0xBFFFFFFF);
             Console.WriteLine($"Time section starts at {StartFrame} and ends at {EndFrame}");
         }

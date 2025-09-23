@@ -1,7 +1,5 @@
 ﻿using System;
 using System.IO;
-using System.Linq;
-using System.Runtime.Remoting.Messaging;
 
 namespace EventTool
 {
@@ -16,7 +14,7 @@ namespace EventTool
         internal void Read(BinaryReader reader, Dictionaries dictionaries)
         {
             uint eventNameHash = reader.ReadUInt32();
-            EventName = dictionaries.eventNameDictionary.TryGetValue(eventNameHash, out string eventName) ? eventName : eventNameHash.ToString();
+            EventName = dictionaries.EventNameDictionary.TryGetValue(eventNameHash, out string eventName) ? eventName : eventNameHash.ToString();
             Console.WriteLine($"Event name is {EventName}");
             byte timeSectionInfo = reader.ReadByte();
             byte timeSectionCount = (byte)(timeSectionInfo & 0b111111);
@@ -60,7 +58,7 @@ namespace EventTool
             for (int i = 0; i < intParamCount; i++)
             {
                 uint intParamHash = reader.ReadUInt32();
-                IntParams[i] = dictionaries.intDictionary.TryGetValue(intParamHash, out string intParam) ? intParam : intParamHash.ToString();
+                IntParams[i] = dictionaries.IntDictionary.TryGetValue(intParamHash, out string intParam) ? intParam : intParamHash.ToString();
                 Console.WriteLine($"Int param #{i} is {IntParams[i]}");
             }
 
@@ -73,7 +71,7 @@ namespace EventTool
             for (int i = 0; i < stringParamCount; i++)
             {
                 ulong stringHash = reader.ReadUInt64();
-                StringParams[i] = dictionaries.stringDictionary.TryGetValue(stringHash, out string stringParam) ? stringParam : stringHash.ToString();
+                StringParams[i] = dictionaries.StringDictionary.TryGetValue(stringHash, out string stringParam) ? stringParam : stringHash.ToString();
                 Console.WriteLine($"String param #{i} is {StringParams[i]}");
             }
         }

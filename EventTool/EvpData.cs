@@ -13,7 +13,7 @@ namespace EventTool
         {
             long evpDataStart = reader.BaseStream.Position;
             uint categoryNameHash = reader.ReadUInt32();
-            CategoryName = dictionaries.categoryNameDictionary.TryGetValue(categoryNameHash,out string categoryName) ? categoryName : categoryNameHash.ToString();
+            CategoryName = dictionaries.CategoryNameDictionary.TryGetValue(categoryNameHash,out string categoryName) ? categoryName : categoryNameHash.ToString();
             Console.WriteLine($"Category name is {CategoryName}");
             ushort eventCount = reader.ReadUInt16();
             Console.WriteLine($"Contains {eventCount} events");
