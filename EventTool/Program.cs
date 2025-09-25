@@ -164,13 +164,17 @@ namespace EventTool
             var newFlags = flags;
             if (!isWriteEmpty)
             {
-                newFlags |= 0b1000;
+                if ((newFlags & 0b1000) == 0)
+                {
+                    newFlags |= 0b1000;
+                }
+
+                if ((newFlags & 0b1) != 0)
+                {
+                    newFlags ^= 0b1;
+                }
             }
-            else
-            {
-                newFlags ^= 0b1000;
-            }
-            //writer.Write(newFlags);
+            writer.Write(newFlags);
 
             writer.BaseStream.Position = endOfPacketPositon;
             writer.Write((uint)endOfPacket - (0x10));
