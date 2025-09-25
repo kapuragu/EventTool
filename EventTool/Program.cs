@@ -39,8 +39,15 @@ namespace EventTool
             dictionaries.StringDictionary = CreateDictionary64(stringDictionaryDirectory);
             dictionaries.IntDictionary = CreateDictionary32(intDictionaryDirectory);
 
+            var isGz = false;
+
             foreach (var arg in args)
             {
+                if (arg.ToLower() == "-gz")
+                {
+                    isGz = true;
+                }
+                
                 if (!File.Exists(arg)) continue;
 
                 if (arg.Contains(DeserializeExtension))
@@ -49,8 +56,15 @@ namespace EventTool
                     if (!File.Exists(serializedFilePath))
                     {
                         Console.WriteLine($"{serializedFilePath} doesn't exist, can't inject serialized events!");
-                        return;
+                        continue;
                     }
+                    
+                    if (arg.Contains(StreamExtension))
+                    {
+                        SerializeStream(serializedFilePath,arg,isGz);
+                        continue;
+                    }
+                    
                     var reader = new BinaryReader(new FileStream(serializedFilePath, FileMode.Open));
                     if (!ReadDemoPacket(reader,true)) continue;
                     var packetBounds = new Tuple<int, int>(-1,-1);
@@ -110,7 +124,7 @@ namespace EventTool
                     File.WriteAllText(Path.GetFileNameWithoutExtension(arg) + Path.GetExtension(arg) + DeserializeExtension, JsonConvert.SerializeObject(evpData, Newtonsoft.Json.Formatting.Indented));
                 }
             }
-            Console.Read();
+            //Console.Read();
         }
 
         private static void SerializePacket(string filePath, BinaryWriter writer, long eventPosition, long endOfPacketPositon, Tuple<int, int> packetBounds, uint flags)
@@ -187,6 +201,12 @@ namespace EventTool
             var startOfPacket = reader.BaseStream.Position;
             Console.WriteLine($"packet start: @{startOfPacket}");
             var signature = reader.ReadUInt32();
+            if (signature == 541347397)
+            {
+                Console.WriteLine($"{signature} is END packet signature!!!");
+                reader.BaseStream.Position = reader.BaseStream.Length;
+                return false;
+            }
             var packetSize = reader.ReadUInt32();
             Console.WriteLine($"packet size: {packetSize} bytes");
             if (signature != 1330464068)
@@ -220,6 +240,7 @@ namespace EventTool
             {
                 case 1:
                     Console.WriteLine($"Node packets can't have events");
+                    reader.BaseStream.Position = startOfPacket + packetSize;
                     return false;
                 case 2:
                     return true;
@@ -271,6 +292,244 @@ namespace EventTool
             }
 
             return stringDictionary;
+        }
+
+        private static void SerializeStream(string serializedFilePath, string arg, bool isGz)
+        {
+            File.Move(serializedFilePath, serializedFilePath+".o");
+
+            var packetBounds = new Tuple<int, int>(-1,-1);
+            var isNextEvents = false;
+                        
+            var evpFullData = JsonConvert.DeserializeObject<EvpData>(File.ReadAllText(arg));
+                        
+            var reader = new BinaryReader(new FileStream(serializedFilePath+".o", FileMode.Open));
+            var isEnd = false;
+            var fileMode = FileMode.Create;
+            var writer = new BinaryWriter(new FileStream(serializedFilePath+".n", fileMode));
+            while (!isEnd && reader.BaseStream.Position < reader.BaseStream.Length)
+            {
+                Console.WriteLine($"read@{reader.BaseStream.Position} Start");
+                var ignorePacket = false;
+                var startOfPacket = reader.BaseStream.Position;
+                var packetType = reader.ReadUInt32();
+                var bodySize = reader.ReadInt32();
+                var time = reader.ReadDouble();
+                reader.BaseStream.Position=startOfPacket;
+                var data = reader.ReadBytes(bodySize);
+                reader.BaseStream.Position=startOfPacket;
+
+                uint chunkFlags=0;
+
+                Console.WriteLine($"read@{reader.BaseStream.Position} write@{writer.BaseStream.Position} packet type {packetType}");
+                if (packetType == 1330464068)
+                {
+                    reader.BaseStream.Position=startOfPacket+0x10;
+                    var demoChunkType = reader.ReadUInt32();
+                    if (demoChunkType == 0)
+                    {
+                        chunkFlags = reader.ReadUInt32();
+                        isNextEvents = (chunkFlags & 0x1)!=0;
+                        var frameStart = reader.ReadInt32();
+                        var frameEnd = reader.ReadInt32();
+                        packetBounds = new Tuple<int, int>(frameStart,frameStart+frameEnd);
+                        var segmentCount = reader.ReadUInt32();
+                    }
+                    else if (demoChunkType == 2)
+                    {
+                        if (isNextEvents)
+                        {
+                            if (!isGz)
+                            {
+                                ignorePacket = true;
+                                //move these events back to the segment chunk. don't write this event chunk
+                            }
+                        }
+                        Console.WriteLine($"isNextEvents={isNextEvents},isGz={isGz},ignorePacket={ignorePacket},");
+                    }
+
+                    var offsetToChunkEnd = reader.ReadUInt32();
+                    var offsetToEvents = reader.ReadUInt32();
+
+                    long eventPosition=0;
+                    if (0==offsetToEvents||offsetToEvents >= bodySize && demoChunkType==0)
+                    {
+                        Console.WriteLine($"packet event offset {offsetToEvents} is zero or out of bounds of {bodySize}!!!");
+                        
+                        eventPosition = bodySize;
+                    }
+                    else
+                    {
+                        eventPosition = offsetToEvents + 0x10;
+                    }
+                    
+                    if (demoChunkType == 1)
+                    {
+                        reader.BaseStream.Position += 4;
+                    }
+
+                    if (!ignorePacket)
+                    {
+                        var startOfWritePacket = writer.BaseStream.Position;
+                        writer.Write(data);
+                        writer.AlignStream(0x10);
+                        var endOfWritePacket = writer.BaseStream.Position;
+                                    
+                        if (demoChunkType == 0||demoChunkType == 2)
+                        {
+                            Console.WriteLine($"packetBounds={packetBounds.Item1},{packetBounds.Item2}");
+                            var evpUnits = new List<EventUnitInfo>();
+                            foreach (var evpUnit in evpFullData.Events)
+                            {
+                                var newEvpUnit = evpUnit;
+                                foreach (var timeSection in evpUnit.TimeSections)
+                                {
+                                    var timeSectionIndex = Array.IndexOf(evpUnit.TimeSections,timeSection);
+
+                                    if ((timeSection.StartFrame & 0x40000000) != 0)
+                                    {
+                                        timeSection.StartFrame = timeSection.StartFrame < 0 ? timeSection.StartFrame : (int)(timeSection.StartFrame & 0xBFFFFFFF);
+                                    }
+                                    if ((timeSection.EndFrame & 0x40000000) != 0)
+                                    {
+                                        timeSection.EndFrame = timeSection.EndFrame < 0 ? timeSection.EndFrame : (int)(timeSection.EndFrame & 0xBFFFFFFF);
+                                    }
+                                    
+                                    newEvpUnit.TimeSections[timeSectionIndex].IsStartOutOfBounds = false;
+                                    if ((packetBounds.Item1 > 0 && timeSection.StartFrame <= packetBounds.Item1)
+                                        || timeSection.StartFrame > packetBounds.Item2)
+                                    {
+                                        newEvpUnit.TimeSections[timeSectionIndex].IsStartOutOfBounds = true;
+                                    }
+
+                                    newEvpUnit.TimeSections[timeSectionIndex].IsEndOutOfBounds = false;
+                                    if ((timeSection.EndFrame > packetBounds.Item2)
+                                        || timeSection.EndFrame < packetBounds.Item1)
+                                    {
+                                        newEvpUnit.TimeSections[timeSectionIndex].IsEndOutOfBounds = true;
+                                    }
+
+                                    if (!newEvpUnit.TimeSections[timeSectionIndex].IsStartOutOfBounds ||
+                                        !newEvpUnit.TimeSections[timeSectionIndex].IsEndOutOfBounds)
+                                    {
+                                        //Console.WriteLine($"startFrame={timeSection.StartFrame},endFrame={timeSection.EndFrame},packetBounds={packetBounds.Item1},{packetBounds.Item2}");
+                                        evpUnits.Add(newEvpUnit);
+                                        break;
+                                    }
+                                    else
+                                    {
+                                        //Console.WriteLine($"NO startFrame={timeSection.StartFrame},endFrame={timeSection.EndFrame},packetBounds={packetBounds.Item1},{packetBounds.Item2}");
+                                    }
+                                }
+                            }
+
+                            var eventsArray = evpUnits.ToArray();
+                            Console.WriteLine($"eventsArray.Length {eventsArray.Length}");
+                            var isNoEvents = eventsArray.Length == 0 || (isGz && isNextEvents && demoChunkType == 0);
+                            var evpData = new EvpData
+                            {
+                                CategoryName = "Normal",
+                                Events = eventsArray
+                            };
+                            
+                            if (isNoEvents)
+                            {
+                                eventPosition = 0;
+                            }
+
+                            writer.BaseStream.Position = startOfWritePacket;
+                            
+                            if (eventPosition==0 && demoChunkType==0)
+                            {
+                                eventPosition = endOfWritePacket-startOfWritePacket;
+                            }
+                            
+                            if (demoChunkType==2 && isGz && isNextEvents)
+                            {
+                                eventPosition = 0x1c;
+                            }
+
+                            if (!isNoEvents || (isGz && isNextEvents && demoChunkType == 2))
+                            {
+                                //isNextEvents = false;
+                                writer.BaseStream.Position = startOfWritePacket+eventPosition;
+                                
+                                evpData.Write(writer, 0, packetBounds);
+
+                                writer.AlignStream(0x10);
+                            }
+
+                            var endOfPacket = writer.BaseStream.Position-startOfWritePacket;
+                            if (isNoEvents)
+                                endOfPacket = writer.BaseStream.Length-startOfWritePacket;
+
+                            writer.BaseStream.Position = startOfWritePacket+4;
+                            writer.Write((uint)endOfPacket);
+
+                            if (chunkFlags != 0 && demoChunkType==0)
+                            {
+                                writer.BaseStream.Position = startOfWritePacket+0x14;
+                                var newFlags = chunkFlags;
+                                if (!isNoEvents)
+                                {
+                                    if ((newFlags & 0b1000) == 0)
+                                    {
+                                        newFlags |= 0b1000;
+                                    }
+
+                                    if ((newFlags & 0b1) != 0)
+                                    {
+                                        newFlags ^= 0b1;
+                                    }
+                                }
+                                else
+                                {
+                                    //newFlags ^= 0b1000;
+                                }
+                                writer.Write(newFlags);
+                            }
+
+                            long endOfPacketPosition = 0x14;
+                            if (demoChunkType == 0)
+                            {
+                                endOfPacketPosition += 0x10;
+                            }
+                            writer.BaseStream.Position = startOfWritePacket + endOfPacketPosition;
+                            writer.Write((uint)endOfPacket - 0x10);
+
+                            writer.BaseStream.Position = startOfWritePacket + endOfPacketPosition + 0x4;
+                            if (demoChunkType == 0 && !isNoEvents)
+                            {
+                                writer.Write((uint)eventPosition-0x10);
+                            }
+                            else
+                            {
+                                writer.WriteZeroes(4);
+                            }
+                            
+                            writer.BaseStream.Position = startOfWritePacket + endOfPacket;
+                            writer.AlignStream(0x10);
+                        }
+                    }
+
+                }
+                else
+                {
+                    var startOfWritePacket = writer.BaseStream.Position;
+                    writer.Write(data);
+                    writer.AlignStream(0x10);
+                    if (packetType == 541347397)
+                    {
+                        isEnd = true;
+                        reader.BaseStream.Position = startOfPacket + bodySize;
+                        Console.WriteLine($"length={reader.BaseStream.Length} startOfPacket={startOfPacket} bodySize={bodySize} removal: {startOfPacket + bodySize} remainder: {reader.BaseStream.Length - (startOfPacket + bodySize)}");
+                        var endData = reader.ReadBytes((int)((int)reader.BaseStream.Length - (startOfPacket + bodySize)));
+                        writer.Write(endData);
+                    }
+                }
+
+                reader.BaseStream.Position = startOfPacket + bodySize;
+            }
         }
     }
 }
